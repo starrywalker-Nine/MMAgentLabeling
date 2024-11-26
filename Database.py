@@ -6,14 +6,22 @@ from datetime import datetime
 import global_vars
 from Agent_config import AgentFactory
 
-# 创建数据库连接
+from dotenv import load_dotenv
+import os 
+
+# LOADING MYSQL ENVIRONMENT VARIABLES
+load_dotenv()
+MYSQL_HOST = os.getenv("MYSQL_HOST")
+MYSQL_USER = os.getenv("MYSQL_USER")
+MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD")
+MYSQL_DATABASE = os.getenv("MYSQL_DATABASE")
 
 def db_writer(question: str, answer: str, agent_name: str, reviewer_score:str, table_name: str = "annotation", schema: dict = global_vars.schema, overwrite_flag : bool = False) -> None:
     # 连接到数据库
-    conn = pymysql.connect(host='1.14.10.129',
-                           user='root',
-                           password='tcci1234',
-                           database='data_annotation',
+    conn = pymysql.connect(host=MYSQL_HOST,
+                           user=MYSQL_USER,
+                           password=MYSQL_PASSWORD,
+                           database=MYSQL_DATABASE,
                            charset='utf8mb4',
                            cursorclass=pymysql.cursors.DictCursor)
     cur = conn.cursor()
