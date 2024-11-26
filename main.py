@@ -1,25 +1,8 @@
 from Database import db_writer
 from Agent_config import AgentFactory
+import global_vars
 
-
-def reg_tool(agent: AgentFactory):
-    # Register the tool function with the user proxy agent.
-    # 向用户代理注册工具功能。
-    agent.user_proxy.register_for_execution(name="db_writer")(db_writer)
-    from autogen import register_function
-
-    # Register the calculator function to the two agents.
-    # 将计算器函数注册到两个代理。
-    register_function(
-        db_writer,
-        caller=agent.assistant,  # The assistant agent can suggest calls to the calculator.
-        executor=agent.user_proxy,  # The user proxy agent can execute the calculator calls.
-        name="db_writer",  # By default, the function name is used as the tool name.
-        description="write final Question and Answer string to mysql database ",  # A description of the tool.
-    )
-
-
-def start(agent: AgentFactory, raw_data):
+def startLabelingFlow(agent: AgentFactory, raw_data):
     # Start a sequence of two-agent chats.
     # Each element in the list is a dictionary that specifies the arguments
     # for the initiate_chat method.
@@ -52,24 +35,34 @@ def start(agent: AgentFactory, raw_data):
         "question": "What is the capital of France?",
         "answer": "Paris",
         "agent_name": "your_agent_name",
+        "reviewer_score": "1-3",
     }
 
     id = 1
     answer = []
-    for chat in chat_results:
-        history = chat.chat_history
-        memoryQuestion = history[0]
-        memoryAnswer = history[1]
-        agent_name = history[1]['name']
-        testString = f"{memoryQuestion} {memoryAnswer} agent:{agent_name}"
-        data = {
-            "id": id,
-            "question": memoryQuestion,
-            "answer": memoryAnswer,
-            "agent_name": agent_name,
-        }
-        answer.append(data)
+    # chatResults structure: 
+    # chat_results[chat_id, chat_history, summary]
+    questionLog = chat_results[0]
+    questionList = questionLog.summary
+    answerLog = chat_results[1]
+    answerList = answerLog.summary
+    reviewerLog = chat_results[2]
+    reviewerList = reviewerLog.summary
 
-        db_res = agent.user_proxy.initiate_chat(agent.assistant,
-                                                message=f"把这些问答对根据下面的格式{json_file_sample}存入数据库中：{testString}")
-    return answer
+    testString = f"Question:{questionList} Answer:{answerList} reviewer_score:{reviewerList} Agent_name: CodeLLama2_v1"
+    data = {
+        "id": id,
+        "question": questionList,
+        "answer": answerList,
+        "reviewer_score": reviewerList,
+    }
+    answer.append(data)
+
+    agent.user_proxy.initiate_chat(agent.assistant,
+                                            message=f"把这些问答对根据下面的格式{json_file_sample}存入数据库中：{testString}")
+        
+    if global_vars.task_name != "":
+        sub_task_name = f"{global_vars.task_name}_startLabelingFlow"
+        print(f"removing {sub_task_name}")
+        global_vars.queueTask.remove(sub_task_name)
+    return "success"

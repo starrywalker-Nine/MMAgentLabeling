@@ -1,39 +1,23 @@
 import os
 import uvicorn
-from fastapi import FastAPI, UploadFile, File
-from main import reg_tool, start
+from fastapi import FastAPI, UploadFile, File, BackgroundTasks
+from main import startLabelingFlow
 from Agent_config import AgentFactory
-from Database import db_writer
+from Database import reg_tool
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 import dashscope
+from dotenv import load_dotenv
+import global_vars
+from pydantic import BaseModel
+
+load_dotenv()
+MULTIMODAL_API_KEY = os.getenv("MULTIMODAL_API_KEY")
 
 app = FastAPI()
 shared_data = {}
-
 # 创建保存文件的目录（如果不存在）
 os.makedirs("source_file", exist_ok=True)
-
-
-@app.post("/uploadfiles", tags=["文件上传接口"],
-          description="文件上传接口：选择文件传输到后台",
-          response_description="返回 code:1 表示成功")
-async def get_uploadfiles(file: UploadFile = File(...)):
-    print("file", file)
-    # 定义文件保存路径
-    path = os.path.join("source_file", file.filename)
-    shared_data["path"] = path
-    # 文件保存
-    with open(path, "wb") as f:
-        for line in file.file:
-            f.write(line)
-
-    return {
-        "code": 1,
-        "message": "文件上传成功",
-        "file_path": path
-    }
-
 
 # 提取ppt文件的文字信息，将图片通过qwen-vl转化为文字信息并保存至output.txt
 def process_PPT(file_name):
@@ -106,6 +90,8 @@ def process_file(file):
     }
     print("shared_data", shared_data)
     process_PPT(file_name)
+    sub_task_name = f"{global_vars.task_name}_process_file"
+    global_vars.queueTask.remove(sub_task_name)
 
 
 def vl_api(img_path):
@@ -114,13 +100,18 @@ def vl_api(img_path):
             "role": "user",
             "content": [
                 {"image": f"""file://{img_path}"""},
-                {"text": "请详细描述这张图片的内容,尽量包含图片中的专业术语文字。"}
+                {"text": "You are professional assist with information extraction tools\
+                 这张图片是来自于富含专业信息的文档截图，按照以下的步骤进行信息提取\
+                 第一步，提取图片中的结构信息，尽可能找到文档的层次结构、段落结构、表格结构等信息。\
+                 第二步，提取图片中的文本信息，尽可能找到文档中的关键信息、细节信息等。不要改动原始数据的任何信息\
+                 第三步，查验核对图片中信息是否正确，不要遗漏任何重要信息。\
+                 最后以美观的格式进行输出。"}
             ]
         }
     ]
     response = dashscope.MultiModalConversation.call(
         # 需要替换成自己的api_key=
-        api_key="sk-***",
+        api_key=MULTIMODAL_API_KEY,
         model='qwen-vl-max',
         messages=messages
     )
@@ -130,14 +121,29 @@ def vl_api(img_path):
 @app.post('/run', tags=["后台运行结果接口"],
           description="后台运行结果接口：根据返回值确认后台是否成功运行",
           response_description="返回 code:1 表示成功，code:0 表示失败")
-async def deal(file: UploadFile = File(...)):
+async def deal(task_name:str, flowTask : BackgroundTasks, file: UploadFile = File(...)):
     try:
-        # 检查 shared_data 中的路径是否存在
-        if "path" not in shared_data or not os.path.exists(shared_data["path"]):
-            raise FileNotFoundError("指定的文件路径不存在或未提供文件路径")
-        file_name = file.filename
+        # TODO: 上传文件的处理逻辑
+        # 需要对执行过程的错误代码进行处理，ValidError或者其他类型的异常处理
+        # 检查任务Name是否在执行
+        if task_name in global_vars.queueTask:
+            return {"code": 0, "message": "任务正在执行中"}
+        else:
+            global_vars.queueTask.append(task_name)
+            global_vars.task_name = task_name
+        # 检查文件是否存在
+        if os.path.exists(f"./source_file/{file.filename}") is True:
+            # rename file
+            file.filename = f"{file.filename}_{str(os.path.getctime(f'./source_file/{file.filename}'))}"
+            file_name = file.filename
+        else:
+            file_name = file.filename
         # 处理文件，提取文字信息
-        process_file(file)
+        sub_task_name = f"{task_name}_process_file"
+        global_vars.queueTask.append(sub_task_name)
+        flowTask.add_task(process_file(file))
+        # await process_file(file)
+        
 
         # 读取处理好后的文字信息(保存到了output.txt中)
         folder_path = f"./source_file/{file_name}"
@@ -149,33 +155,18 @@ async def deal(file: UploadFile = File(...)):
         agent = AgentFactory()
         reg_tool(agent)
         # 处理数据并保存结果
-        shared_data["answer"] = start(agent, raw_data)
+        sub_task_name = f"{task_name}_startLabelingFlow"
+        global_vars.queueTask.append(sub_task_name)
+        flowTask.add_task(startLabelingFlow(agent, raw_data))
+        global_vars.queueTask.remove(task_name)
     except FileNotFoundError as e:
         return {"code": 0, "message": str(e)}
     except Exception as e:
         # 记录其他类型的异常，返回错误信息
         print(f"发生错误: {str(e)}")
         return {"code": 0, "message": "处理过程中出现错误"}
-    # 如果一切正常，返回成功代码
-    return {
-        "code": 1,
-        "message": "处理成功",
-    }
-
-
-# shared_data["answer"] = "这是一个测试"
-
-
-@app.post('/answer', tags=["返回运行结果接口"],
-          description="返回运行结果接口：返回后台运行结果",
-          response_description="返回 code:1 表示成功")
-async def answer():
-    return {
-
-        "answer": shared_data["answer"],
-        "code": 1
-    }
-
+    # 如果一切正常，返回成功代码 return pydantic.BaseModel
+    return {"code": 1, "message": "Success"}
 
 if __name__ == '__main__':
     uvicorn.run("api:app", port=8000, reload=True)

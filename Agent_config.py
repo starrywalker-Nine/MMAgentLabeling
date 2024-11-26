@@ -1,15 +1,16 @@
 from autogen import ConversableAgent
+from dotenv import load_dotenv
+import os 
 
-
+load_dotenv()
+API_KEY = os.getenv("API_KEY")
+BASE_URL = os.getenv("BASE_URL")
 # initial qwenList models
 class ConversableAgentManager:
     def __init__(self, api_key, base_url):
         self.api_key = api_key
         self.base_url = base_url
         self.config_list = [
-            # {"model":"gpt-3.5-turbo",
-            #             "api_key": "sk-xxxx",
-            #             "base_url": "https://api.xty.app/v1" },
             {"model": "qwen-plus",
              "api_key": api_key,
              "base_url": base_url, }]
@@ -43,8 +44,7 @@ class ConversableAgentManager:
 class AgentFactory:
     def __init__(self):
         # use
-        manager = ConversableAgentManager("sk-xxxx",
-                                          "https://dashscope.aliyuncs.com/compatible-mode/v1")
+        manager = ConversableAgentManager(API_KEY, BASE_URL)
         # Agent Card configuration
         allocatorCard = "你是一个先进的文档解析机器人，专门负责从各种格式的文档中提取文本，\
             合理地按照上下文和格式切分段落，并在过程中尽可能地识别和纠正错误。\
